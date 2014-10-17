@@ -1,148 +1,111 @@
 package ch.hsr.schatzkarte;
 
-import java.io.File;
-
-import org.osmdroid.DefaultResourceProxyImpl;
-import org.osmdroid.ResourceProxy;
-import org.osmdroid.api.IMapController;
-import org.osmdroid.tileprovider.MapTileProviderArray;
-import org.osmdroid.tileprovider.MapTileProviderBase;
-import org.osmdroid.tileprovider.modules.IArchiveFile;
-import org.osmdroid.tileprovider.modules.MBTilesFileArchive;
-import org.osmdroid.tileprovider.modules.MapTileFileArchiveProvider;
-import org.osmdroid.tileprovider.modules.MapTileModuleProviderBase;
-import org.osmdroid.tileprovider.tilesource.TileSourceFactory;
-import org.osmdroid.tileprovider.tilesource.XYTileSource;
-import org.osmdroid.tileprovider.util.SimpleRegisterReceiver;
 import org.osmdroid.util.GeoPoint;
 import org.osmdroid.views.MapView;
-import org.osmdroid.views.overlay.TilesOverlay;
 
 import android.app.Activity;
-import android.content.Context;
-import android.graphics.Color;
-import android.graphics.drawable.Drawable;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
 import android.os.Bundle;
-import android.os.Environment;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.MenuItem.OnMenuItemClickListener;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.Toast;
 
-public class MainActivity extends Activity implements LocationListener {
-
-	private LocationManager locationManager;
-	private double laenge;
-	private double breite;
-	private Button btn;
-	private Tracker tracker;
+public class MainActivity extends Activity implements GpsLocationListener {
+	private Button btnSetMarker;
+	private MapManager mMapManager;
+	private GpsDeliver mGpsDeliver;
+	private Location mCurrentLocation;
 	
 	@Override
 	protected void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 		setContentView(R.layout.activity_main);
-		locationManager = (LocationManager)getSystemService(Context.LOCATION_SERVICE);
-		btn = (Button)findViewById(R.id.button1);
-		if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-			Toast.makeText(getApplicationContext(), "Kein PGS Empfäger. Bitte aktivieren", Toast.LENGTH_SHORT).show();
-			finish();
-		}
-		
-		MapView map = (MapView) findViewById(R.id.mapview );
-		map.setTileSource(TileSourceFactory.MAPQUESTOSM);
-		 
-		map.setMultiTouchControls(true);
-		map.setBuiltInZoomControls(true);
-		 
-		IMapController controller = map.getController();
-		controller.setZoom(18);
-		 
-		// Die TileSource beschreibt die Eigenschaften der Kacheln die wir anzeigen
-		XYTileSource treasureMapTileSource = new XYTileSource("mbtiles", ResourceProxy.string.offline_mode, 1, 20, 256, ".png", "http://appquest.hsr.ch/hsr.mbtiles");
-		
-		File file = new File(Environment.getExternalStorageDirectory(), "/hsr.mbtiles");
-		
-		if (file.exists()) {
-			/* Das verwenden von mbtiles ist leider ein wenig aufwändig, wir müssen
-			 * unsere XYTileSource in verschiedene Klassen 'verpacken' um sie dann
-			 * als TilesOverlay über der Grundkarte anzuzeigen.
-			 */
-			MapTileModuleProviderBase treasureMapModuleProvider = new MapTileFileArchiveProvider(new SimpleRegisterReceiver(this), 
-					treasureMapTileSource, new IArchiveFile[] { MBTilesFileArchive.getDatabaseFileArchive(file) });
-			 
-			MapTileProviderBase treasureMapProvider = new MapTileProviderArray(treasureMapTileSource, null,
-					new MapTileModuleProviderBase[] { treasureMapModuleProvider });
-			 
-			TilesOverlay treasureMapTilesOverlay = new TilesOverlay(treasureMapProvider, getBaseContext());
-			treasureMapTilesOverlay.setLoadingBackgroundColor(Color.TRANSPARENT);
-			 
-			// Jetzt können wir den Overlay zu unserer Karte hinzufügen:
-			map.getOverlays().add(treasureMapTilesOverlay);	
-			
-			GeoPoint point = new GeoPoint(47.223124, 8.817465);
-			controller.setCenter(point);
-			
-			ResourceProxy resourceProxy = new DefaultResourceProxyImpl(getApplicationContext());
-			Drawable marker=getResources().getDrawable(android.R.drawable.star_big_on);
-	        int markerWidth = marker.getIntrinsicWidth();
-	        int markerHeight = marker.getIntrinsicHeight();
-	        marker.setBounds(0, markerHeight, markerWidth, 0);
-	        
-			tracker = new Tracker(marker, resourceProxy);
-	        map.getOverlays().add(tracker);
-	        
-	        
-		}
 
-		btn.setOnClickListener(new OnClickListener() {
-			
+		getWindow().setFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON, WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+		// initialise components
+		btnSetMarker = (Button)findViewById(R.id.button1);
+		final MapView map = (MapView) findViewById(R.id.mapview);
+		mGpsDeliver = new GpsDeliver(getApplicationContext());
+		mMapManager = new MapManager(getApplicationContext(), map);
+
+		GeoPoint point = new GeoPoint(47.223124, 8.817465);
+		mMapManager.setCenter(point);
+		
+		initListener();
+	}
+
+	private void initListener() {
+		btnSetMarker.setOnClickListener(new OnClickListener() {
 			@Override
 			public void onClick(View v) {
-				GeoPoint myPoint1 = new GeoPoint(breite, laenge);
-		        tracker.addItem(myPoint1, "myPoint1", "myPoint1");
+				mMapManager.setCenter(mCurrentLocation);
+				mMapManager.addMarker(mCurrentLocation);
 			}
 		});
 	}
 
 	@Override
 	protected void onResume() {
-		// TODO Auto-generated method stub
 		super.onResume();
-		locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 0, 0, this);
+		mGpsDeliver.startDelivery(this);
 	}
 	
 	@Override
 	protected void onPause() {
-		// TODO Auto-generated method stub
 		super.onPause();
-		locationManager.removeUpdates(this);
+		mGpsDeliver.stopDelivery();
+	}
+
+	@Override
+	public void onLocation(Location location) {
+		btnSetMarker.setEnabled(true);
+		mCurrentLocation = location;
+	}
+
+	@Override
+	public void onLocationSensorEnabled() {
+		
+	}
+
+	@Override
+	public void onLocationSensorDisabled() {
+		Toast.makeText(getApplicationContext(), "Can't find a satellit. Please gps turn on!", Toast.LENGTH_LONG).show();
+		finish();
 	}
 	
 	@Override
-	public void onLocationChanged(Location location) {
-		laenge = location.getLongitude();
-		breite = location.getLatitude();
-		// listener und benarchtigen wenn gps gefunden
-	}
-
-	@Override
-	public void onStatusChanged(String provider, int status, Bundle extras) {
-		// TODO Auto-generated method stub
+	public boolean onCreateOptionsMenu(Menu menu) { 
+		MenuItem menuItem = menu.add("Log");
+		menuItem.setOnMenuItemClickListener(new OnMenuItemClickListener() {
+			@Override
+			public boolean onMenuItemClick(MenuItem item) {
+				log();
+				return false;
+			}
+		});
 		
+		return super.onCreateOptionsMenu(menu);
 	}
-
-	@Override
-	public void onProviderEnabled(String provider) {
-		// TODO Auto-generated method stub
-		
-	}
-
-	@Override
-	public void onProviderDisabled(String provider) {
-		// TODO Auto-generated method stub
-		
+	 
+	
+	private void log() {
+		Intent intent = new Intent("ch.appquest.intent.LOG");
+	 
+		if (getPackageManager().queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY).isEmpty()) {
+			Toast.makeText(this, "Logbook App not Installed", Toast.LENGTH_LONG).show();
+			return;
+		}
+	 
+		intent.putExtra("ch.appquest.taskname", "Schatzkarte");
+		intent.putExtra("ch.appquest.logmessage", mMapManager.getMarkerJson());
+	 
+		startActivity(intent);
 	}
 }
